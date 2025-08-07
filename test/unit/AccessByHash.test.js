@@ -1,17 +1,11 @@
 const { ethers } = require("hardhat");
 const {expect} = require("chai");
 const {loadFixture} = require("@nomicfoundation/hardhat-toolbox/network-helpers");
-
-
+const {stringToBytes32} = require('@utils/datatype');
+//const { toUtf8Bytes,keccak256 } =  require("ethers");
 
 describe("AccessByHash 合约测试",() =>{
-  function stringToBytes32(str) {
-    const buf = Buffer.alloc(32); // 32字节缓冲区
-    const strBuf = Buffer.from(str, 'utf8');
-    // 复制字符串内容，剩余部分补0
-    strBuf.copy(buf, 0, 0, Math.min(strBuf.length, 32));
-    return '0x' + buf.toString('hex');
-  }
+  
     async function deployTokenFixture(){
         const [owner,user1] = await ethers.getSigners();
         const ABH = await ethers.getContractFactory("AccessByHash");
@@ -44,12 +38,26 @@ describe("AccessByHash 合约测试",() =>{
       });
       it("有效hash访问成功", async () => {
         const {abh,owner} = await loadFixture(deployTokenFixture);
-        const bytes32 = stringToBytes32("Hello World");
-            await expect(abh.connect(owner).updateHashStatus(bytes32,true))
-        await expect(abh.access(bytes32))
-        .to.be
-        .revertedWithCustomError(abh,"NotPermitted");
+        const salt = "0x1234"; // 测试salt
+        //console.log("ABI编码:", ethers.AbiCoder.defaultAbiCoder().encode(["address", "bytes"], [owner.address, salt]));
+        //console.log("Packed编码:", ethers.solidityPacked(["address", "bytes"], [owner.address, salt]));
+        const packed = ethers.solidityPacked(
+          ["address", "bytes"],
+          [owner.address, salt]
+      );
+        const hash = ethers.keccak256(packed);
+        // Check permission exists
+        await expect(abh.connect(owner).updateHashStatus(hash,true))
+        .to.emit(abh,"HashChanged")
+        .withArgs(hash,true);
+        // Check permission exists
+        expect(await abh.permitted(hash)).to.equal(true);
+        // Execute access function
+        await abh.connect(owner).access(salt);
+        // Verify accessed mapping was updated
+        expect(await abh.accessed(owner.address)).to.equal(true);
       });
+      
     });
     
 })
