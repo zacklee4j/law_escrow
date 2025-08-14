@@ -1,46 +1,93 @@
 const {ethers} = require('hardhat');
 const {expect} = require('chai');
 const {loadFixture} = require("@nomicfoundation/hardhat-toolbox/network-helpers");
-const {parseEther } = require('ethers');
-
+const {parseEther,toUtf8String } = require('ethers');
+const UniswapV2Factory = require('@uniswap/v2-core/build/UniswapV2Factory.json');
+const UniswapV2Router02 = require('@uniswap/v2-periphery/build/UniswapV2Router02.json');
+const WETH9 = require('@uniswap/v2-periphery/build/WETH9.json');
 describe("AutoLP Contract Tests", function () {
-    let AutoLP;
-  let autoLP;
-  let owner;
-  let addr1;
-  let addr2;
-  let addrs;
   
-  // 测试用的 ERC20 代币
-  let TestToken;
-  let testToken;
-  
-  // Uniswap V2 Router 地址 (使用 Hardhat 本地网络上的模拟地址)
-  const UNI_ROUTER_ADDR = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
-  const WETH_TOKEN_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+  async function deployAutoLPFixture() {
+    const [owner, user1] = await ethers.getSigners();
 
-  before(async function () {
-    [owner, addr1, addr2, ...addrs] = await ethers.getSigners();
+    // 1. 部署WETH9合约
     
-    // 部署测试用的 ERC20 代币
-    TestToken = await ethers.getContractFactory("ERC20Mock");
-    testToken = await TestToken.deploy("Test Token", "TTK", owner.address, parseEther("1000000"));
-    console.log(1);
-    // 部署 AutoLP 合约
-    AutoLP = await ethers.getContractFactory("AutoLP");
-    console.log(2);
-    autoLP = await AutoLP.deploy(testToken.getAddress());
-    console.log(3);
-    // 给合约发送一些测试代币
-    await testToken.transfer(autoLP.address, parseEther("1000"));
-  });
+    const WETH = await ethers.getContractFactory(
+      WETH9.abi,
+      WETH9.bytecode
+    );
+    const weth = await WETH.deploy();
+    const wethAddress = await weth.getAddress();
+    // 2. 部署测试代币
+    const TestToken = await ethers.getContractFactory("ERC20Mock");
+    const testToken = await TestToken.deploy(
+      "TestToken", 
+      "TTK", 
+      owner.address, 
+      parseEther("1000000")
+    );
+    const tokenAddress = await testToken.getAddress();
+    console.log(tokenAddress);
+    // 3. 部署UniswapV2工厂合约
+    const Factory = await ethers.getContractFactory(
+      UniswapV2Factory.abi,
+      UniswapV2Factory.bytecode
+    );
+    const factory = await Factory.deploy(owner.address);
+    const factoryAddress = await factory.getAddress();
+    // 4. 创建代币-WETH交易对
+    console.log(tokenAddress, wethAddress);
+    await factory.createPair(tokenAddress, wethAddress);
+    const pairAddress = await factory.getPair(tokenAddress, wethAddress);
+
+    // 5. 部署Router02合约(需先获取Pair合约的initCodeHash)
+    const Router = await ethers.getContractFactory(
+      UniswapV2Router02.abi,
+      UniswapV2Router02.bytecode
+    );
+    const router = await Router.deploy(factoryAddress, wethAddress);
+    //const routerAddress = await router.getAddress();
+    // 6. 部署AutoLP合约
+    try {
+      const AutoLP = await ethers.getContractFactory("AutoLP");
+      const autoLP = await AutoLP.deploy(tokenAddress);
+      console.log("AutoLP deployed to:", await autoLP.getAddress());
+      
+    } catch (error) {
+    console.error("Deployment failed:", error);
+    if (error.data) {
+        console.log("Revert reason:", toUtf8String(error.data));
+      }
+    }
+    const autoLPAddress = await autoLP.getAddress();
+    // 7.准备测试环境
+    await testToken.transfer(autoLPAddress, parseEther("1000"));
+    await weth.deposit({ value: parseEther("10") });
+    await weth.transfer(autoLPAddress, parseEther("5"));
+
+    return { 
+      autoLP,
+      testToken, 
+      weth, 
+      factory, 
+      router, 
+      owner, 
+      user1,
+      pairAddress
+    };
+  }
 
   describe("部署", function () {
     it("应该正确设置代币地址", async function () {
-      expect(await autoLP.tokenAddr()).to.equal(testToken.address);
+      
+      const { autoLP,testToken } = await loadFixture(deployAutoLPFixture);
+      
+      expect(await autoLP.tokenAddr()).to.equal(await testToken.getAddress());
+      
     });
     
     it("应该正确设置 Uniswap Router", async function () {
+      const { autoLP,testToken } = await loadFixture(deployAutoLPFixture);
       // 这里可以添加检查 Router 设置的测试
     });
   });
